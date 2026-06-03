@@ -26,10 +26,8 @@ import org.clarent.ivyidea.intellij.IntellijUtils;
 import org.clarent.ivyidea.ivy.IvyManager;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 import java.util.logging.Logger;
 
 /**
@@ -60,18 +58,6 @@ class IntellijModuleDependencies {
 
     public Module getModuleDependency(ModuleId moduleId) {
         return moduleDependencies.get(moduleId);
-    }
-
-    public boolean hasInternalDependencies() {
-        return !moduleDependencies.isEmpty();
-    }
-
-    public Set<ModuleId> getInternalModuleIds() {
-        return moduleDependencies.keySet();
-    }
-
-    public Collection<Module> getAllDependencyModules() {
-        return moduleDependencies.values();
     }
 
     private void fillModuleDependencies() throws IvySettingsNotFoundException, IvySettingsFileReadException {

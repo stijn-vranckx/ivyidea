@@ -20,11 +20,7 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.project.Project;
 import org.apache.ivy.Ivy;
 import org.apache.ivy.core.module.descriptor.Artifact;
-import org.apache.ivy.core.module.descriptor.Configuration;
-import org.apache.ivy.core.module.descriptor.DefaultModuleDescriptor;
-import org.apache.ivy.core.module.descriptor.DependencyDescriptor;
 import org.apache.ivy.core.module.descriptor.ModuleDescriptor;
-import org.apache.ivy.core.module.id.ModuleId;
 import org.apache.ivy.core.module.id.ModuleRevisionId;
 import org.apache.ivy.core.report.ArtifactDownloadReport;
 import org.apache.ivy.core.report.ConfigurationResolveReport;
@@ -85,32 +81,8 @@ class DependencyResolver {
 
         final Ivy ivy = ivyManager.getIvy(module);
         try {
-            final IntellijModuleDependencies moduleDependencies = new IntellijModuleDependencies(module, ivyManager);
-            final boolean detectInternal = IvyIdeaConfigHelper.detectDependenciesOnOtherModulesWhileResolving(module.getProject());
-
-            ResolveReport resolveReport;
-            boolean filteredResolve = false;
-            if (detectInternal && moduleDependencies.hasInternalDependencies()) {
-                try {
-                    ModuleDescriptor originalDescriptor = IvyUtil.parseIvyFile(ivyFile, ivy);
-                    ModuleDescriptor filteredDescriptor = buildFilteredDescriptor(originalDescriptor, moduleDependencies.getInternalModuleIds());
-                    resolveReport = ivy.resolve(filteredDescriptor, IvyIdeaConfigHelper.createResolveOptions(module));
-                    filteredResolve = true;
-                } catch (RuntimeException e) {
-                    LOGGER.warning("Failed to build filtered Ivy descriptor, falling back to full resolve: " + e.getMessage());
-                    resolveReport = ivy.resolve(ivyFile.toURI().toURL(), IvyIdeaConfigHelper.createResolveOptions(module));
-                }
-            } else {
-                resolveReport = ivy.resolve(ivyFile.toURI().toURL(), IvyIdeaConfigHelper.createResolveOptions(module));
-            }
-
-            extractDependencies(ivy, resolveReport, moduleDependencies);
-
-            if (filteredResolve) {
-                for (Module internalModule : moduleDependencies.getAllDependencyModules()) {
-                    resolvedDependencies.add(new InternalDependency(internalModule));
-                }
-            }
+            final ResolveReport resolveReport = ivy.resolve(ivyFile.toURI().toURL(), IvyIdeaConfigHelper.createResolveOptions(module));
+            extractDependencies(ivy, resolveReport, new IntellijModuleDependencies(module, ivyManager));
         } catch (ParseException | IOException e) {
             throw new IvyFileReadException(ivyFile.getAbsolutePath(), module.getName(), e);
         }
@@ -172,30 +144,6 @@ class DependencyResolver {
                 }
             }
         }
-    }
-
-    static ModuleDescriptor buildFilteredDescriptor(ModuleDescriptor original, Set<ModuleId> internalModuleIds) {
-        DefaultModuleDescriptor filtered = new DefaultModuleDescriptor(
-                original.getModuleRevisionId(),
-                original.getStatus(),
-                original.getPublicationDate()
-        );
-        for (Configuration conf : original.getConfigurations()) {
-            filtered.addConfiguration(conf);
-        }
-        int removed = 0;
-        for (DependencyDescriptor dep : original.getDependencies()) {
-            if (internalModuleIds.contains(dep.getDependencyId())) {
-                removed++;
-            } else {
-                filtered.addDependency(dep);
-            }
-        }
-        if (removed > 0) {
-            LOGGER.info("Excluded " + removed + " internal module dependenc" + (removed == 1 ? "y" : "ies")
-                    + " from Ivy descriptor before resolve");
-        }
-        return filtered;
     }
 
     private void addExternalDependency(Artifact artifact, File artifactFile, String resolvedConfiguration, Project project) {
