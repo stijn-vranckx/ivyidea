@@ -130,7 +130,7 @@ public class WorkspaceModuleResolver extends AbstractResolver {
         DownloadReport dr = new DownloadReport();
         for (Artifact artifact : artifacts) {
             ArtifactDownloadReport adr = new ArtifactDownloadReport(artifact);
-            adr.setDownloadStatus(DownloadStatus.NO);
+            adr.setDownloadStatus(DownloadStatus.FAILED);
             adr.setSize(0);
             dr.addArtifactReport(adr);
         }
