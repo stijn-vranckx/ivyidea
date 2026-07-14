@@ -22,9 +22,7 @@ import org.apache.ivy.core.module.descriptor.ModuleDescriptor;
 import org.apache.ivy.core.module.id.ModuleId;
 import org.clarent.ivyidea.exception.IvySettingsFileReadException;
 import org.clarent.ivyidea.exception.IvySettingsNotFoundException;
-import org.clarent.ivyidea.intellij.IntellijUtils;
 import org.clarent.ivyidea.ivy.IvyManager;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -63,39 +61,15 @@ class IntellijModuleDependencies {
     private void fillModuleDependencies() throws IvySettingsNotFoundException, IvySettingsFileReadException {
         final ModuleDescriptor descriptor = ivyManager.getModuleDescriptor(module);
         if (descriptor != null) {
-            final DependencyDescriptor[] ivyDependencies = descriptor.getDependencies();
-            for (Module dependencyModule : IntellijUtils.getAllModulesWithIvyIdeaFacet(module.getProject())) {
-                if (!module.equals(dependencyModule)) {
-                    for (DependencyDescriptor ivyDependency : ivyDependencies) {
-                        final ModuleId ivyDependencyId = ivyDependency.getDependencyId();
-                        final ModuleId dependencyModuleId = getModuleId(dependencyModule);
-                        if (ivyDependencyId.equals(dependencyModuleId)) {
-                            LOGGER.info("Recognized dependency " + ivyDependency + " as intellij module '" + dependencyModule.getName() + "' in this project!");
-                            moduleDependencies.put(dependencyModuleId, dependencyModule);
-                            break;
-                        }
-                    }
+            for (DependencyDescriptor ivyDependency : descriptor.getDependencies()) {
+                final ModuleId ivyDependencyId = ivyDependency.getDependencyId();
+                final Module dependencyModule = ivyManager.getModuleForModuleId(ivyDependencyId, module.getProject());
+                if (dependencyModule != null && !module.equals(dependencyModule)) {
+                    LOGGER.info("Recognized dependency " + ivyDependency + " as intellij module '" + dependencyModule.getName() + "' in this project!");
+                    moduleDependencies.put(ivyDependencyId, dependencyModule);
                 }
             }
         }
     }
-
-    @Nullable
-    private ModuleId getModuleId(Module module) throws IvySettingsNotFoundException, IvySettingsFileReadException {
-        if (!moduleDependencies.containsValue(module)) {
-            final ModuleDescriptor ivyModuleDescriptor = ivyManager.getModuleDescriptor(module);
-            if (ivyModuleDescriptor != null) {
-                moduleDependencies.put(ivyModuleDescriptor.getModuleRevisionId().getModuleId(), module);
-            }
-
-        }
-        for (ModuleId moduleId : moduleDependencies.keySet()) {
-            if (module.equals(moduleDependencies.get(moduleId))) {
-                return moduleId;
-            }
-        }
-        return null;
-    }
-
 
 }

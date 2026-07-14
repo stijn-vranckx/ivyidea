@@ -26,6 +26,7 @@ import org.apache.ivy.core.module.descriptor.DependencyDescriptor;
 import org.apache.ivy.core.module.descriptor.ExcludeRule;
 import org.apache.ivy.core.module.descriptor.License;
 import org.apache.ivy.core.module.descriptor.ModuleDescriptor;
+import org.apache.ivy.core.module.id.ModuleId;
 import org.apache.ivy.core.module.id.ModuleRevisionId;
 import org.apache.ivy.core.report.ArtifactDownloadReport;
 import org.apache.ivy.core.report.DownloadReport;
@@ -39,12 +40,12 @@ import org.apache.ivy.plugins.resolver.AbstractResolver;
 import org.apache.ivy.plugins.resolver.util.ResolvedResource;
 import org.apache.ivy.plugins.version.VersionMatcher;
 import org.clarent.ivyidea.config.IvyIdeaConfigHelper;
-import org.clarent.ivyidea.intellij.IntellijUtils;
 
 import java.io.File;
 import java.io.IOException;
 import java.text.ParseException;
 import java.util.Date;
+import java.util.Map;
 import java.util.logging.Logger;
 
 public class WorkspaceModuleResolver extends AbstractResolver {
@@ -54,9 +55,14 @@ public class WorkspaceModuleResolver extends AbstractResolver {
     private static final String INTELLIJ_MODULE_EXTENSION = "intellij-module";
 
     private final Project project;
+    private final Map<File, ModuleDescriptor> workspaceIvyFileCache;
+    private final WorkspaceModuleIndex workspaceModuleIndex;
 
-    public WorkspaceModuleResolver(Project project, IvySettings settings) {
+    public WorkspaceModuleResolver(Project project, IvySettings settings, Map<File, ModuleDescriptor> workspaceIvyFileCache,
+                                    WorkspaceModuleIndex workspaceModuleIndex) {
         this.project = project;
+        this.workspaceIvyFileCache = workspaceIvyFileCache;
+        this.workspaceModuleIndex = workspaceModuleIndex;
         setName("ivyidea-workspace-resolver");
         setSettings(settings);
         LOG.info("WorkspaceModuleResolver created for project: " + project.getName());
@@ -69,61 +75,49 @@ public class WorkspaceModuleResolver extends AbstractResolver {
         }
 
         ModuleRevisionId requestedMrid = dd.getDependencyRevisionId();
-        LOG.info("getDependency called for " + requestedMrid);
 
-        Module[] facetedModules = IntellijUtils.getAllModulesWithIvyIdeaFacet(project);
-        LOG.info("Found " + facetedModules.length + " faceted modules");
-
-        for (Module workspaceModule : facetedModules) {
-            File ivyFile = IvyUtil.getIvyFile(workspaceModule);
-            LOG.info("  checking module '" + workspaceModule.getName() + "', ivyFile=" + ivyFile);
-            if (ivyFile == null || !ivyFile.exists()) {
-                LOG.info("    ivyFile null or doesn't exist");
-                continue;
-            }
-
-            try {
-                IvySettings settings = (IvySettings) getSettings();
-                if (settings == null) {
-                    LOG.info("    settings is null, skipping");
-                    continue;
-                }
-                ModuleDescriptor workspaceMd = IvyUtil.parseIvyFile(ivyFile, settings);
-                ModuleRevisionId candidateMrid = workspaceMd.getModuleRevisionId();
-                LOG.info("    module mrid = " + candidateMrid);
-
-                if (!candidateMrid.getModuleId().equals(requestedMrid.getModuleId())) {
-                    LOG.info("    moduleId mismatch: " + candidateMrid.getModuleId() + " vs " + requestedMrid.getModuleId());
-                    continue;
-                }
-
-                VersionMatcher versionMatcher = settings.getVersionMatcher();
-                if (!versionMatcher.accept(requestedMrid, workspaceMd)) {
-                    LOG.info("    versionMatcher rejected");
-                    continue;
-                }
-
-                LOG.info("    MATCH! Returning workspace descriptor for " + candidateMrid);
-                DefaultModuleDescriptor clonedMd = cloneMd(workspaceMd, workspaceModule);
-
-                MetadataArtifactDownloadReport madr = new MetadataArtifactDownloadReport(
-                        new DefaultArtifact(clonedMd.getModuleRevisionId(),
-                                clonedMd.getPublicationDate(),
-                                workspaceModule.getName(),
-                                INTELLIJ_MODULE_TYPE,
-                                INTELLIJ_MODULE_EXTENSION));
-                madr.setDownloadStatus(DownloadStatus.SUCCESSFUL);
-                madr.setSearched(true);
-
-                return new ResolvedModuleRevision(this, this, clonedMd, madr);
-            } catch (RuntimeException e) {
-                LOG.info("    error parsing ivy file: " + e.getMessage());
-                continue;
-            }
+        IvySettings settings = (IvySettings) getSettings();
+        if (settings == null) {
+            LOG.info("settings is null, skipping lookup for " + requestedMrid);
+            return null;
         }
 
-        LOG.info("getDependency returning null for " + requestedMrid);
-        return null;
+        ModuleId requestedModuleId = requestedMrid.getModuleId();
+        Module workspaceModule = workspaceModuleIndex.findModule(requestedModuleId, project, settings, workspaceIvyFileCache);
+        if (workspaceModule == null) {
+            return null;
+        }
+
+        File ivyFile = IvyUtil.getIvyFile(workspaceModule);
+        try {
+            // computeIfAbsent (not get-then-put) so concurrent resolves of different modules
+            // racing on the same shared ivy.xml can't corrupt the cache -- at worst they'd
+            // redundantly parse the same file once each, never see a half-written value.
+            ModuleDescriptor workspaceMd = workspaceIvyFileCache.computeIfAbsent(ivyFile, f -> IvyUtil.parseIvyFile(f, settings));
+
+            VersionMatcher versionMatcher = settings.getVersionMatcher();
+            if (!versionMatcher.accept(requestedMrid, workspaceMd)) {
+                LOG.info("versionMatcher rejected workspace module '" + workspaceModule.getName() + "' for " + requestedMrid);
+                return null;
+            }
+
+            LOG.info("MATCH! Returning workspace descriptor for '" + workspaceModule.getName() + "', " + requestedMrid);
+            DefaultModuleDescriptor clonedMd = cloneMd(workspaceMd, workspaceModule);
+
+            MetadataArtifactDownloadReport madr = new MetadataArtifactDownloadReport(
+                    new DefaultArtifact(clonedMd.getModuleRevisionId(),
+                            clonedMd.getPublicationDate(),
+                            workspaceModule.getName(),
+                            INTELLIJ_MODULE_TYPE,
+                            INTELLIJ_MODULE_EXTENSION));
+            madr.setDownloadStatus(DownloadStatus.SUCCESSFUL);
+            madr.setSearched(true);
+
+            return new ResolvedModuleRevision(this, this, clonedMd, madr);
+        } catch (RuntimeException e) {
+            LOG.info("error parsing ivy file '" + ivyFile + "': " + e.getMessage());
+            return null;
+        }
     }
 
     public DownloadReport download(Artifact[] artifacts, DownloadOptions options) {
