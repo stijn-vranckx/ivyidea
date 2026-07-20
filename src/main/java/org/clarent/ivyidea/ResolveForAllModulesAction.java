@@ -24,6 +24,7 @@ import com.intellij.openapi.module.Module;
 import com.intellij.openapi.progress.ProgressIndicator;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
+import org.clarent.ivyidea.config.IvyIdeaConfigHelper;
 import org.clarent.ivyidea.exception.IvyFileReadException;
 import org.clarent.ivyidea.exception.IvySettingsFileReadException;
 import org.clarent.ivyidea.exception.IvySettingsNotFoundException;
@@ -55,6 +56,9 @@ import java.util.logging.Logger;
  * IvyManager instance (and its caches) is shared across all worker threads by design, so that
  * every workspace module's settings/descriptor are still only ever built once no matter how
  * many other modules depend on it; see IvyManager for the thread-safety measures that requires.
+ * Parallelism can be turned off via the "Resolve modules in parallel" project setting, which
+ * pins the worker pool to a single thread (module dependencies still resolve sequentially in
+ * that case, just on the same worker instead of one-by-one on the EDT).
  *
  * Known limitation: cancelling mid-resolve no longer reliably interrupts every in-flight
  * worker (ProgressMonitorThread's interrupt mechanism was built for a single resolve thread).
@@ -79,7 +83,8 @@ public class ResolveForAllModulesAction extends AbstractResolveAction {
                 final IvyManager ivyManager = new IvyManager();
 
                 final Module[] modules = ReadAction.compute(() -> IntellijUtils.getAllModulesWithIvyIdeaFacet(project));
-                final int threadCount = Math.max(1, Math.min(MAX_RESOLVE_THREADS, modules.length));
+                final int maxThreads = IvyIdeaConfigHelper.isParallelResolveEnabled(project) ? MAX_RESOLVE_THREADS : 1;
+                final int threadCount = Math.max(1, Math.min(maxThreads, modules.length));
 
                 final List<IntellijDependencyResolver> resolvers = new CopyOnWriteArrayList<>();
                 final AtomicInteger moduleCount = new AtomicInteger();

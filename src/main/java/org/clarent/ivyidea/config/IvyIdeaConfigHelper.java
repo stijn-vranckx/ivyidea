@@ -141,6 +141,10 @@ public class IvyIdeaConfigHelper {
         return getProjectConfig(project).isDetectDependenciesOnOtherModules();
     }
 
+    public static boolean isParallelResolveEnabled(final Project project) {
+        return getProjectConfig(project).isParallelResolve();
+    }
+
     @NotNull
     private static IvyIdeaProjectSettings getProjectConfig(Project project) {
         IvyIdeaProjectService component = project.getService(IvyIdeaProjectService.class);
