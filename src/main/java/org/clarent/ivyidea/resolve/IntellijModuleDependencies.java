@@ -17,59 +17,51 @@
 package org.clarent.ivyidea.resolve;
 
 import com.intellij.openapi.module.Module;
-import org.apache.ivy.core.module.descriptor.DependencyDescriptor;
-import org.apache.ivy.core.module.descriptor.ModuleDescriptor;
 import org.apache.ivy.core.module.id.ModuleId;
 import org.clarent.ivyidea.exception.IvySettingsFileReadException;
 import org.clarent.ivyidea.exception.IvySettingsNotFoundException;
 import org.clarent.ivyidea.ivy.IvyManager;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.logging.Logger;
 
 /**
  * Holds the link between IntelliJ {@link com.intellij.openapi.module.Module}s and ivy
- * {@link org.apache.ivy.core.module.id.ModuleRevisionId}s
+ * {@link org.apache.ivy.core.module.id.ModuleRevisionId}s.
+ *
+ * Looks up any workspace module by {@link ModuleId} via {@link IvyManager#getModuleForModuleId},
+ * not just ones declared directly in this module's own ivy.xml -- a dependency resolved
+ * transitively (e.g. this module depends on B, and B depends on workspace module C) is just as
+ * much an "internal" dependency of this module as a direct one once Ivy has flattened the
+ * dependency graph, and needs to be recognized as such so it becomes a module dependency in
+ * IntelliJ instead of an unrecognized/failed external artifact.
  */
 class IntellijModuleDependencies {
 
     private static final Logger LOGGER = Logger.getLogger(IntellijModuleDependencies.class.getName());
 
-    private IvyManager ivyManager;
-    private Module module;
-    private Map<ModuleId, Module> moduleDependencies = new HashMap<ModuleId, Module>();
+    private final IvyManager ivyManager;
+    private final Module module;
 
-    public IntellijModuleDependencies(Module module, IvyManager ivyManager) throws IvySettingsNotFoundException, IvySettingsFileReadException {
+    public IntellijModuleDependencies(Module module, IvyManager ivyManager) {
         this.module = module;
         this.ivyManager = ivyManager;
-        fillModuleDependencies();
     }
 
     public Module getModule() {
         return module;
     }
 
-    public boolean isInternalIntellijModuleDependency(ModuleId moduleId) {
-        return moduleDependencies.containsKey(moduleId);
+    public boolean isInternalIntellijModuleDependency(ModuleId moduleId) throws IvySettingsNotFoundException, IvySettingsFileReadException {
+        return getModuleDependency(moduleId) != null;
     }
 
-    public Module getModuleDependency(ModuleId moduleId) {
-        return moduleDependencies.get(moduleId);
-    }
-
-    private void fillModuleDependencies() throws IvySettingsNotFoundException, IvySettingsFileReadException {
-        final ModuleDescriptor descriptor = ivyManager.getModuleDescriptor(module);
-        if (descriptor != null) {
-            for (DependencyDescriptor ivyDependency : descriptor.getDependencies()) {
-                final ModuleId ivyDependencyId = ivyDependency.getDependencyId();
-                final Module dependencyModule = ivyManager.getModuleForModuleId(ivyDependencyId, module.getProject());
-                if (dependencyModule != null && !module.equals(dependencyModule)) {
-                    LOGGER.info("Recognized dependency " + ivyDependency + " as intellij module '" + dependencyModule.getName() + "' in this project!");
-                    moduleDependencies.put(ivyDependencyId, dependencyModule);
-                }
-            }
+    public Module getModuleDependency(ModuleId moduleId) throws IvySettingsNotFoundException, IvySettingsFileReadException {
+        final Module dependencyModule = ivyManager.getModuleForModuleId(moduleId, module.getProject());
+        if (dependencyModule == null || module.equals(dependencyModule)) {
+            return null;
         }
+        LOGGER.fine("Recognized dependency " + moduleId + " as intellij module '" + dependencyModule.getName() + "' in this project!");
+        return dependencyModule;
     }
 
 }
